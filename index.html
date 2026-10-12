@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vigilancia Inteligente ULEAM</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f1f17; color: #e8f5ec;
+           max-width: 960px; margin: 0 auto; padding: 24px; }
+    h1 { color: #6ee7a0; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+    .tab { background: #17301f; color: #e8f5ec; border: 1px solid #22a559;
+           padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 15px; }
+    .tab.activa { background: #22a559; }
+    button.accion { background: #22a559; color: white; border: 0; padding: 12px 22px;
+                    border-radius: 8px; font-size: 16px; cursor: pointer; }
+    button.rojo { background: #c0392b; }
+    button:disabled { opacity: .5; }
+    input[type=text] { width: 100%; max-width: 420px; padding: 10px; border-radius: 8px;
+                       border: 1px solid #22a559; background: #17301f; color: #e8f5ec;
+                       margin-right: 8px; }
+    input[type=file] { margin: 16px 0; display: block; }
+    .panel { display: none; }
+    .panel.activo { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 14px; margin-top: 18px; }
+    .card { background: #17301f; border-radius: 10px; padding: 10px; }
+    .card img { width: 100%; border-radius: 6px; }
+    .alerta { color: #ff6b6b; font-weight: bold; }
+    #video-vivo { width: 100%; max-width: 720px; border-radius: 10px; margin-top: 16px;
+                  background: #000; display: none; }
+    #lista-vivo div { background: #3b1a1a; border-left: 4px solid #ff4d4d;
+                      padding: 8px 12px; margin-top: 8px; border-radius: 6px; }
+    .fila { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>Vigilancia Inteligente - Granja ULEAM</h1>
+
+  <div class="tabs">
+    <button class="tab activa" id="t-video" onclick="mostrar('video')">Subir video</button>
+    <button class="tab" id="t-camara" onclick="mostrar('camara')">Cámara en vivo</button>
+  </div>
+
+  <!-- PESTAÑA: SUBIR VIDEO -->
+  <div class="panel activo" id="p-video">
+    <p>Suba un video y la IA detectará personas y pollos.</p>
+    <input type="file" id="video" accept="video/*">
+    <button class="accion" id="btn" onclick="analizar()">Analizar video</button>
+    <p id="estado"></p>
+    <div id="resumen"></div>
+    <div class="grid" id="lista"></div>
+  </div>
+
+  <!-- PESTAÑA: CÁMARA EN VIVO -->
+  <div class="panel" id="p-camara">
+    <p>Escriba la dirección de IP Webcam de su celular.</p>
+    <div class="fila">
+      <input type="text" id="url-camara" placeholder="http://192.168.1.XX:8080/videofeed">
+      <button class="accion" id="btn-iniciar" onclick="iniciarCamara()">Iniciar</button>
+      <button class="accion rojo" onclick="detenerCamara()">Detener</button>
+    </div>
+    <img id="video-vivo" alt="Cámara en vivo">
+    <h3>Alertas</h3>
+    <div id="lista-vivo"><p>Sin alertas todavía.</p></div>
+  </div>
+
+  <script>
+    let timerAlertas = null;
+
+    // Recuerda la última dirección de cámara escrita
+    try {
+      const guardada = localStorage.getItem("urlCamara");
+      if (guardada) document.getElementById("url-camara").value = guardada;
+    } catch (e) {}
+
+    function mostrar(que) {
+      for (const n of ["video", "camara"]) {
+        document.getElementById("p-" + n).classList.toggle("activo", n === que);
+        document.getElementById("t-" + n).classList.toggle("activa", n === que);
+      }
+      if (que !== "camara") detenerCamara();
+    }
+
+    // ---- Subir video ----
+    async function analizar() {
+      const archivo = document.getElementById("video").files[0];
+      if (!archivo) { alert("Elija un video primero"); return; }
+      const btn = document.getElementById("btn");
+      const estado = document.getElementById("estado");
+      btn.disabled = true;
+      estado.textContent = "Analizando... puede tardar unos minutos";
+      document.getElementById("lista").innerHTML = "";
+      document.getElementById("resumen").innerHTML = "";
+
+      const datos = new FormData();
+      datos.append("video", archivo);
+      try {
+        const r = await fetch("/analizar", { method: "POST", body: datos });
+        const j = await r.json();
+        estado.textContent = "Análisis terminado";
+        const partes = Object.entries(j.resumen).map(([t, n]) => `${t}: ${n}`);
+        document.getElementById("resumen").innerHTML =
+          `<h3 class="alerta">${j.detecciones.length ? "Detecciones → " + partes.join(" | ")
+                                                     : "Sin detecciones"}</h3>`;
+        document.getElementById("lista").innerHTML = j.detecciones.map(d => `
+          <div class="card">
+            <img src="${d.imagen}">
+            <p><b>${d.tipo}</b> (${d.confianza}%) - segundo ${d.tiempo}</p>
+          </div>`).join("");
+      } catch (e) {
+        estado.textContent = "Error: " + e;
+      }
+      btn.disabled = false;
+    }
+
+    // ---- Cámara en vivo ----
+    function iniciarCamara() {
+      const url = document.getElementById("url-camara").value.trim();
+      if (!url || url.includes("XX")) {
+        alert("Escriba la dirección REAL de su celular (cambie XX por su IP)");
+        return;
+      }
+      try { localStorage.setItem("urlCamara", url); } catch (e) {}
+      const img = document.getElementById("video-vivo");
+      img.style.display = "block";
+      img.src = "/camara/video?url=" + encodeURIComponent(url) + "&t=" + Date.now();
+      clearInterval(timerAlertas);
+      timerAlertas = setInterval(cargarAlertas, 1500);
+    }
+
+    function detenerCamara() {
+      clearInterval(timerAlertas);
+      const img = document.getElementById("video-vivo");
+      img.removeAttribute("src");
+      img.style.display = "none";
+    }
+
+    async function cargarAlertas() {
+      try {
+        const r = await fetch("/camara/alertas");
+        const a = await r.json();
+        document.getElementById("lista-vivo").innerHTML = a.length
+          ? a.map(x => `<div><b>${x.tipo}</b> detectado (${x.confianza}%) - ${x.hora}</div>`).join("")
+          : "<p>Sin alertas todavía.</p>";
+      } catch (e) {}
+    }
+  </script>
+</body>
+</html>
